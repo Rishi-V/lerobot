@@ -9,6 +9,7 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 
@@ -45,9 +46,15 @@ def sync_panels(panels, series, mins, maxs, t: float) -> None:
         ax.set_ylim(*ylim_expanding(lo, hi))
         ann.set_text(f"min {lo:.2f}  max {hi:.2f}  Δ {hi - lo:.2f}" if math.isfinite(lo) else "")
 
-
+"""
+Follower arm:
+  python record_positions.py --arm follower --port /dev/ttyACM0 --id my_awesome_follower_arm
+Leader arm:
+  python record_positions.py --arm leader --port /dev/ttyACM0 --id my_awesome_leader_arm
+"""
 def main() -> None:
     ap = argparse.ArgumentParser(description="Live plot of SO101 arm joint positions.")
+    ap.add_argument("--arm", type=str, choices=("follower", "leader"), default="follower", help="Which arm type to connect to.")
     ap.add_argument("--port", type=str, default="/dev/ttyACM0", help="Serial port of the SO101 arm.")
     ap.add_argument("--id", type=str, default="my_awesome_follower_arm", help="Robot id for the calibration file.")
     ap.add_argument("--hz", type=float, default=20.0, help="Sampling frequency in Hz.")
@@ -55,9 +62,12 @@ def main() -> None:
     ap.add_argument("--torque-off-on-exit", action="store_true", help="Disable torque on exit; default off (avoids overload when moving by hand).")
     args = ap.parse_args()
 
-    robot = SO101Follower(
-        SO101FollowerConfig(port=args.port, id=args.id, disable_torque_on_disconnect=args.torque_off_on_exit)
-    )
+    if args.arm == "leader":
+        robot = SO101Leader(SO101LeaderConfig(port=args.port, id=args.id))
+    else:
+        robot = SO101Follower(
+            SO101FollowerConfig(port=args.port, id=args.id, disable_torque_on_disconnect=args.torque_off_on_exit)
+        )
     if not robot.calibration:
         raise FileNotFoundError(f"No calibration file found for id '{args.id}'. Expected at: {robot.calibration_fpath}")
 
@@ -99,8 +109,11 @@ def main() -> None:
     try:
         while plt.fignum_exists(fig.number) and not stop[0]:
             t_loop = time.perf_counter()
-            obs = robot.get_observation()
-            pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
+            if args.arm == "leader":
+                pos = robot.get_action()
+            else:
+                obs = robot.get_observation()
+                pos = {k: v for k, v in obs.items() if k.endswith(".pos")}
             last_t = time.perf_counter() - t0
             tick(pos, last_t)
             sync_panels(panels, series, mins, maxs, last_t)
